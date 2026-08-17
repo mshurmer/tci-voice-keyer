@@ -8,10 +8,12 @@ const uint TxAudioStream = 2;
 const uint TxChrono = 3;
 const int RequiredRate = 48000;
 const int MaxTransmitSeconds = 30;
+const int TailSilenceMilliseconds = 250;
 
 Console.WriteLine("TCI Voice Keyer - Milestone 5 WAV playback diagnostic");
 Console.WriteLine("WARNING: this test WILL transmit the selected WAV file over TCI.");
 Console.WriteLine("For this milestone the WAV must be 48 kHz PCM/float, mono or stereo.");
+Console.WriteLine($"After the WAV ends, {TailSilenceMilliseconds} ms of TCI-fed digital silence is sent before unkeying.");
 Console.WriteLine("Use USB mode and make sure transmitting the recording is safe.\n");
 
 if (args.Length != 2 || !Uri.TryCreate(args[0], UriKind.Absolute, out var serverUri) ||
@@ -68,6 +70,7 @@ var transmitCommandSent = false;
 var sampleIndex = 0;
 var txChronoCount = 0;
 var audioPacketCount = 0;
+var tailSilencePacketCount = 0;
 var rxConfirmed = false;
 
 async Task SendTextAsync(string command)
@@ -170,11 +173,12 @@ try
     await SendTextAsync($"trx:{Transceiver},true,tci;");
     transmitCommandSent = true;
 
-    var hardStop = DateTime.UtcNow.AddSeconds(MaxTransmitSeconds + 2);
+    var hardStop = DateTime.UtcNow.AddSeconds(MaxTransmitSeconds + 3);
     var pendingReceive = ReceiveMessageAsync();
-    var wavFinished = false;
+    var transmissionFinished = false;
+    DateTime? tailSilenceUntil = null;
 
-    while (!wavFinished && DateTime.UtcNow < hardStop && socket.State == WebSocketState.Open)
+    while (!transmissionFinished && DateTime.UtcNow < hardStop && socket.State == WebSocketState.Open)
     {
         var message = await pendingReceive;
         if (message.Type == WebSocketMessageType.Close) throw new InvalidOperationException("Thetis closed connection during TX.");
@@ -206,6 +210,8 @@ try
                 WriteU32(packet, 12, 0); WriteU32(packet, 16, 0); WriteU32(packet, 20, length);
                 WriteU32(packet, 24, TxAudioStream); WriteU32(packet, 28, 2);
 
+                var packetIsTailSilence = sampleIndex >= wav.MonoSamples.Length;
+
                 for (var frame = 0; frame < framesRequested; frame++)
                 {
                     var value = sampleIndex < wav.MonoSamples.Length ? wav.MonoSamples[sampleIndex++] : 0f;
@@ -216,18 +222,35 @@ try
 
                 await socket.SendAsync(packet, WebSocketMessageType.Binary, true, CancellationToken.None);
                 audioPacketCount++;
-                if (audioPacketCount <= 5 || audioPacketCount % 20 == 0)
-                    Console.WriteLine($"TX_CHRONO #{txChronoCount}: sent WAV packet {packet.Length} bytes, progress {Math.Min(100.0, sampleIndex * 100.0 / wav.MonoSamples.Length):F1}%");
 
-                if (sampleIndex >= wav.MonoSamples.Length)
-                    wavFinished = true;
+                if (packetIsTailSilence)
+                    tailSilencePacketCount++;
+
+                if (audioPacketCount <= 5 || audioPacketCount % 20 == 0)
+                {
+                    var phase = packetIsTailSilence ? "tail silence" : $"progress {Math.Min(100.0, sampleIndex * 100.0 / wav.MonoSamples.Length):F1}%";
+                    Console.WriteLine($"TX_CHRONO #{txChronoCount}: sent WAV packet {packet.Length} bytes, {phase}");
+                }
+
+                if (sampleIndex >= wav.MonoSamples.Length && tailSilenceUntil is null)
+                {
+                    tailSilenceUntil = DateTime.UtcNow.AddMilliseconds(TailSilenceMilliseconds);
+                    Console.WriteLine($"WAV samples complete. Keeping MOX on and feeding {TailSilenceMilliseconds} ms of TX_CHRONO-paced digital silence...");
+                }
+
+                if (tailSilenceUntil.HasValue && DateTime.UtcNow >= tailSilenceUntil.Value)
+                    transmissionFinished = true;
             }
         }
 
-        if (!wavFinished) pendingReceive = ReceiveMessageAsync();
+        if (!transmissionFinished)
+            pendingReceive = ReceiveMessageAsync();
     }
 
-    Console.WriteLine("WAV data complete. UNKEYING");
+    if (!transmissionFinished)
+        throw new TimeoutException("Transmit hard-stop reached before WAV/tail-silence sequence completed.");
+
+    Console.WriteLine($"Trailing silence complete ({tailSilencePacketCount} full silent packets). UNKEYING");
     await TryUnkeyAsync();
 
     if (!pendingReceive.IsCompleted) { /* leave receive pending and race below */ }
@@ -251,10 +274,11 @@ try
     }
 
     Console.WriteLine($"\nTX_CHRONO frames: {txChronoCount}");
-    Console.WriteLine($"WAV TX_AUDIO_STREAM packets: {audioPacketCount}");
+    Console.WriteLine($"WAV/Tail TX_AUDIO_STREAM packets: {audioPacketCount}");
+    Console.WriteLine($"Full trailing-silence packets: {tailSilencePacketCount}");
     Console.WriteLine($"WAV samples consumed: {sampleIndex}/{wav.MonoSamples.Length}");
-    if (rxConfirmed && sampleIndex >= wav.MonoSamples.Length && audioPacketCount > 0)
-        Console.WriteLine("*** Milestone 5 candidate success: WAV supplied over TCI and RX confirmed. ***");
+    if (rxConfirmed && sampleIndex >= wav.MonoSamples.Length && audioPacketCount > 0 && tailSilencePacketCount > 0)
+        Console.WriteLine("*** Milestone 5 candidate success: WAV + trailing silence supplied over TCI and RX confirmed. ***");
     else
         Console.WriteLine("Milestone 5 not yet proven. Check output and confirm Thetis is in RX.");
 }
