@@ -47,13 +47,12 @@ if (!string.Equals(Console.ReadLine(), "REPEAT", StringComparison.Ordinal))
 }
 
 await using var keyer = new VoiceKeyerEngine();
-using var ctrlC = new CancellationTokenSource();
 
 Console.CancelKeyPress += (_, e) =>
 {
     e.Cancel = true;
-    Console.WriteLine("\nCtrl+C: STOP requested; forcing RX...");
-    ctrlC.Cancel();
+    Console.WriteLine("\nCtrl+C: STOP requested; sending force-RX before cancelling the run...");
+    _ = keyer.StopAsync();
 };
 
 keyer.StatusChanged += status =>
@@ -67,11 +66,7 @@ Console.WriteLine("\nStarting. Press Ctrl+C at any time to STOP and force RX.\n"
 
 try
 {
-    await keyer.StartAsync(options, ctrlC.Token);
-}
-catch (OperationCanceledException)
-{
-    // The engine reports the stop sequence itself.
+    await keyer.StartAsync(options);
 }
 catch (Exception ex)
 {
