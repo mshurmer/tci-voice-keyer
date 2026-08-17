@@ -99,7 +99,7 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
             _socket?.Dispose();
             _socket = null;
             _pendingReceive = null;
-            _runCts.Dispose();
+            _runCts?.Dispose();
             _runCts = null;
             _txCommandSent = false;
         }
@@ -112,8 +112,10 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
             return;
 
         Report(KeyerState.Stopping, "Stop requested. Forcing RX...");
-        cts.Cancel();
+        // Safety order matters: send the unkey command BEFORE cancelling the run.
+        // Cancelling a pending ClientWebSocket ReceiveAsync can poison/abort the socket.
         await TryUnkeyAsync(CancellationToken.None);
+        cts.Cancel();
     }
 
     private async Task TransmitOnceAsync(WavData wav, KeyerOptions options, int repeat, CancellationToken ct)
@@ -218,6 +220,7 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
 
         while (_socket?.State == WebSocketState.Open)
         {
+            ct.ThrowIfCancellationRequested();
             var message = await ReceiveMessageAsync(ct);
             if (message.Type == WebSocketMessageType.Close)
                 throw new InvalidOperationException("Thetis closed the WebSocket during initialization.");
@@ -270,7 +273,10 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
         WebSocketReceiveResult result;
         do
         {
-            result = await _socket.ReceiveAsync(receiveBuffer, ct);
+            // Deliberately never cancel an in-flight ReceiveAsync. Earlier live testing
+            // proved that cancelling it can abort the ClientWebSocket and prevent a safe
+            // unkey. Cancellation is checked between complete WebSocket messages instead.
+            result = await _socket.ReceiveAsync(receiveBuffer, CancellationToken.None);
             if (result.MessageType == WebSocketMessageType.Close)
                 return (WebSocketMessageType.Close, Array.Empty<byte>());
             messageBuffer.Write(receiveBuffer, 0, result.Count);
@@ -283,7 +289,7 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
         => StatusChanged?.Invoke(new KeyerStatus(state, message, currentRepeat, totalRepeats, remaining));
 
     private static bool IsSupportedVoiceMode(string? mode)
-        => mode is not null && mode.Equals("USB", StringComparison.OrdinalIgnoreCase)
+        => mode?.Equals("USB", StringComparison.OrdinalIgnoreCase) == true
             || mode?.Equals("LSB", StringComparison.OrdinalIgnoreCase) == true
             || mode?.Equals("DIGU", StringComparison.OrdinalIgnoreCase) == true
             || mode?.Equals("DIGL", StringComparison.OrdinalIgnoreCase) == true
