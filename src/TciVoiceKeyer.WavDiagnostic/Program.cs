@@ -8,11 +8,13 @@ const uint TxAudioStream = 2;
 const uint TxChrono = 3;
 const int RequiredRate = 48000;
 const int MaxTransmitSeconds = 30;
+const int FadeOutMilliseconds = 20;
 const int TailSilenceMilliseconds = 250;
 
 Console.WriteLine("TCI Voice Keyer - Milestone 5 WAV playback diagnostic");
 Console.WriteLine("WARNING: this test WILL transmit the selected WAV file over TCI.");
 Console.WriteLine("For this milestone the WAV must be 48 kHz PCM/float, mono or stereo.");
+Console.WriteLine($"The final {FadeOutMilliseconds} ms of the WAV is faded smoothly to zero.");
 Console.WriteLine($"After the WAV ends, {TailSilenceMilliseconds} ms of TCI-fed digital silence is sent before unkeying.");
 Console.WriteLine("Use USB mode and make sure transmitting the recording is safe.\n");
 
@@ -55,12 +57,17 @@ if (wav.Duration.TotalSeconds > MaxTransmitSeconds)
     return;
 }
 
+var originalLastSample = wav.MonoSamples.Length > 0 ? wav.MonoSamples[^1] : 0f;
+ApplyFadeOut(wav.MonoSamples, wav.SampleRate, FadeOutMilliseconds);
+var fadedLastSample = wav.MonoSamples.Length > 0 ? wav.MonoSamples[^1] : 0f;
+
 Console.WriteLine($"Loaded WAV: {Path.GetFileName(wavPath)}");
 Console.WriteLine($"  Rate:      {wav.SampleRate} Hz");
 Console.WriteLine($"  Channels:  {wav.SourceChannels}");
 Console.WriteLine($"  Samples:   {wav.MonoSamples.Length}");
 Console.WriteLine($"  Duration:  {wav.Duration.TotalSeconds:F2} s");
-Console.WriteLine($"  Peak:      {wav.Peak:F3} ({20 * Math.Log10(Math.Max(wav.Peak, 1e-12)):F1} dBFS)\n");
+Console.WriteLine($"  Peak:      {wav.Peak:F3} ({20 * Math.Log10(Math.Max(wav.Peak, 1e-12)):F1} dBFS)");
+Console.WriteLine($"  Tail fade: {FadeOutMilliseconds} ms; final sample {originalLastSample:F6} -> {fadedLastSample:F6}\n");
 
 using var socket = new ClientWebSocket();
 var txAllowed = false;
@@ -185,8 +192,7 @@ try
 
         if (message.Type == WebSocketMessageType.Text)
         {
-            var text = Encoding.UTF8.GetString(message.Payload);
-            Console.WriteLine($"TEXT  {text}");
+            Console.WriteLine($"TEXT  {Encoding.UTF8.GetString(message.Payload)}");
         }
         else if (message.Type == WebSocketMessageType.Binary && message.Payload.Length >= StreamHeaderBytes)
         {
@@ -222,9 +228,7 @@ try
 
                 await socket.SendAsync(packet, WebSocketMessageType.Binary, true, CancellationToken.None);
                 audioPacketCount++;
-
-                if (packetIsTailSilence)
-                    tailSilencePacketCount++;
+                if (packetIsTailSilence) tailSilencePacketCount++;
 
                 if (audioPacketCount <= 5 || audioPacketCount % 20 == 0)
                 {
@@ -243,8 +247,7 @@ try
             }
         }
 
-        if (!transmissionFinished)
-            pendingReceive = ReceiveMessageAsync();
+        if (!transmissionFinished) pendingReceive = ReceiveMessageAsync();
     }
 
     if (!transmissionFinished)
@@ -253,8 +256,7 @@ try
     Console.WriteLine($"Trailing silence complete ({tailSilencePacketCount} full silent packets). UNKEYING");
     await TryUnkeyAsync();
 
-    if (!pendingReceive.IsCompleted) { /* leave receive pending and race below */ }
-    else pendingReceive = ReceiveMessageAsync();
+    if (pendingReceive.IsCompleted) pendingReceive = ReceiveMessageAsync();
 
     var observeUntil = DateTime.UtcNow.AddMilliseconds(1500);
     while (DateTime.UtcNow < observeUntil && socket.State == WebSocketState.Open && !rxConfirmed)
@@ -278,7 +280,7 @@ try
     Console.WriteLine($"Full trailing-silence packets: {tailSilencePacketCount}");
     Console.WriteLine($"WAV samples consumed: {sampleIndex}/{wav.MonoSamples.Length}");
     if (rxConfirmed && sampleIndex >= wav.MonoSamples.Length && audioPacketCount > 0 && tailSilencePacketCount > 0)
-        Console.WriteLine("*** Milestone 5 candidate success: WAV + trailing silence supplied over TCI and RX confirmed. ***");
+        Console.WriteLine("*** Milestone 5 candidate success: faded WAV + trailing silence supplied over TCI and RX confirmed. ***");
     else
         Console.WriteLine("Milestone 5 not yet proven. Check output and confirm Thetis is in RX.");
 }
@@ -303,6 +305,19 @@ finally
 
 static uint ReadU32(byte[] data, int offset) => BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(offset, 4));
 static void WriteU32(byte[] data, int offset, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(offset, 4), value);
+
+static void ApplyFadeOut(float[] samples, int sampleRate, int milliseconds)
+{
+    if (samples.Length == 0 || milliseconds <= 0) return;
+    var fadeSamples = Math.Min(samples.Length, Math.Max(2, sampleRate * milliseconds / 1000));
+    var start = samples.Length - fadeSamples;
+    for (var i = 0; i < fadeSamples; i++)
+    {
+        var gain = 1f - i / (float)(fadeSamples - 1);
+        samples[start + i] *= gain;
+    }
+    samples[^1] = 0f;
+}
 
 static WavData LoadWav(string path)
 {
