@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 
+// Milestone 1 was proven against Thetis TCI protocol 2.0 on 2026-08-17.
 Console.WriteLine("TCI Voice Keyer - Milestone 1 connection diagnostic");
 Console.WriteLine("This version is READ ONLY. It does not key the transmitter or send audio.\n");
 
