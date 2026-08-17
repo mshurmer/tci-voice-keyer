@@ -16,7 +16,7 @@ Console.WriteLine("WARNING: this test WILL transmit the selected WAV file over T
 Console.WriteLine("For this milestone the WAV must be 48 kHz PCM/float, mono or stereo.");
 Console.WriteLine($"The final {FadeOutMilliseconds} ms of the WAV is faded smoothly to zero.");
 Console.WriteLine($"After the WAV ends, {TailSilenceMilliseconds} ms of TCI-fed digital silence is sent before unkeying.");
-Console.WriteLine("Use USB mode and make sure transmitting the recording is safe.\n");
+Console.WriteLine("Supported TX modes: USB, LSB, DIGU/DUSB and DIGL/DLSB. Make sure transmitting the recording is safe.\n");
 
 if (args.Length != 2 || !Uri.TryCreate(args[0], UriKind.Absolute, out var serverUri) ||
     (serverUri.Scheme != "ws" && serverUri.Scheme != "wss"))
@@ -71,7 +71,8 @@ Console.WriteLine($"  Tail fade: {FadeOutMilliseconds} ms; final sample {origina
 
 using var socket = new ClientWebSocket();
 var txAllowed = false;
-var usbMode = false;
+var supportedMode = false;
+var detectedMode = "unknown";
 var readySeen = false;
 var transmitCommandSent = false;
 var sampleIndex = 0;
@@ -128,7 +129,7 @@ try
 {
     Console.WriteLine($"Connecting to {serverUri} ...");
     await socket.ConnectAsync(serverUri, CancellationToken.None);
-    Console.WriteLine("Connected. Waiting for READY, USB mode and TX permission...\n");
+    Console.WriteLine("Connected. Waiting for READY, supported SSB/digital mode and TX permission...\n");
 
     while (socket.State == WebSocketState.Open && !readySeen)
     {
@@ -141,7 +142,17 @@ try
         var text = Encoding.UTF8.GetString(message.Payload);
         Console.WriteLine($"TEXT  {text}");
         if (text.Contains($"tx_enable:{Transceiver},true;", StringComparison.OrdinalIgnoreCase)) txAllowed = true;
-        if (text.Contains($"modulation:{Transceiver},USB;", StringComparison.OrdinalIgnoreCase)) usbMode = true;
+
+        foreach (var mode in new[] { "USB", "LSB", "DIGU", "DIGL", "DUSB", "DLSB" })
+        {
+            if (text.Contains($"modulation:{Transceiver},{mode};", StringComparison.OrdinalIgnoreCase))
+            {
+                supportedMode = true;
+                detectedMode = mode;
+                break;
+            }
+        }
+
         if (text.Contains("ready;", StringComparison.OrdinalIgnoreCase)) readySeen = true;
     }
 
@@ -150,12 +161,13 @@ try
         Console.WriteLine("ABORTED: TX is not enabled for transceiver 0.");
         return;
     }
-    if (!usbMode)
+    if (!supportedMode)
     {
-        Console.WriteLine("ABORTED: receiver 0 is not in USB mode. No PTT command was sent.");
+        Console.WriteLine("ABORTED: receiver 0 is not in USB, LSB, DIGU/DUSB or DIGL/DLSB mode. No PTT command was sent.");
         return;
     }
 
+    Console.WriteLine($"Thetis reports supported TX mode: {detectedMode}");
     Console.WriteLine("\nConfiguring proven TCI TX audio format:");
     await SendTextAsync("audio_samplerate:48000;");
     await SendTextAsync("audio_stream_sample_type:float32;");
@@ -164,7 +176,7 @@ try
     await SendTextAsync("tx_stream_audio_buffering:100;");
 
     Console.WriteLine("\nNothing has been transmitted yet.");
-    Console.WriteLine($"Ready to transmit: {Path.GetFileName(wavPath)} ({wav.Duration.TotalSeconds:F2}s)");
+    Console.WriteLine($"Ready to transmit: {Path.GetFileName(wavPath)} ({wav.Duration.TotalSeconds:F2}s) in {detectedMode}");
     Console.WriteLine("Type exactly WAV and press Enter to transmit it ONCE.");
     Console.Write("Confirmation: ");
     if (!string.Equals(Console.ReadLine(), "WAV", StringComparison.Ordinal))
@@ -176,7 +188,7 @@ try
     Console.WriteLine("\nFinal countdown:");
     for (var i = 3; i >= 1; i--) { Console.WriteLine($"  {i}..."); await Task.Delay(1000); }
 
-    Console.WriteLine("\nKEYING NOW - WAV playback");
+    Console.WriteLine($"\nKEYING NOW - WAV playback in {detectedMode}");
     await SendTextAsync($"trx:{Transceiver},true,tci;");
     transmitCommandSent = true;
 
