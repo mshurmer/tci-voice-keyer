@@ -1,43 +1,38 @@
 # TCI Voice Keyer
 
-A Windows voice keyer for Thetis using TCI for both radio control and transmit/receive audio.
+A Windows voice keyer for Thetis using the TCI protocol for both control and audio.
 
-The project is being developed in small, testable milestones so that each proven stage remains recoverable in GitHub.
+## Goal
 
-## Current milestone
+The application will eventually:
 
-**Milestone 1: read-only TCI connection diagnostic**
+- connect directly to Thetis using TCI over WebSocket;
+- send voice audio using the TCI TX audio stream;
+- control PTT with TCI (`TRX`);
+- repeat a selected CQ voice message a configurable number of times;
+- provide a simple graphical interface suitable for non-expert users;
+- fail safe to receive if the connection, audio engine, or application fails.
 
-The current diagnostic connects to a TCI WebSocket server, displays initialization traffic, reports binary frame sizes, and confirms when `READY;` is received. It intentionally does **not** key the transmitter or send audio.
+## Development strategy
 
-## Run the diagnostic
+We are deliberately building and proving one small milestone at a time. The `main` branch is intended to remain a known-working baseline.
 
-Requires the .NET 8 SDK.
+### Milestone 1 - TCI connection diagnostic ✅ PROVEN
+
+The first diagnostic is read-only. It connects to Thetis, prints incoming TCI text messages, reports binary frames, and detects the final `READY;` initialization command.
+
+Successfully tested against Thetis at `ws://127.0.0.1:50001/` with Thetis reporting ExpertSDR3 TCI protocol 2.0.
+
+Observed audio defaults were 48 kHz, float32, stereo, 2048 samples, with 50 ms TX stream buffering.
+
+### Milestone 2 - controlled PTT diagnostic
+
+Next we will add an explicitly enabled, short-duration PTT test with guaranteed unkey logic. No voice audio will be sent yet.
+
+## Run Milestone 1
 
 ```powershell
-dotnet run --project src/TciVoiceKeyer.Console -- ws://<thetis-ip>:<tci-port>
+dotnet run --project src/TciVoiceKeyer.Console -- ws://127.0.0.1:50001/
 ```
 
-For Thetis running on the same PC:
-
-```powershell
-dotnet run --project src/TciVoiceKeyer.Console -- ws://127.0.0.1:<tci-port>
-```
-
-Use the TCI port shown/configured in Thetis.
-
-See [docs/testing.md](docs/testing.md) for the test procedure and [docs/architecture.md](docs/architecture.md) for the planned milestones.
-
-## Planned end state
-
-The finished application is intended to provide a simple graphical interface with:
-
-- connection status;
-- selectable recorded voice messages;
-- repeat count;
-- receive/listen delay;
-- Start CQ and Stop controls;
-- clear RX/TX/Error indication;
-- fail-safe PTT release.
-
-The GUI will remain separate from the tested TCI core so that interface changes cannot easily break radio-control logic.
+Press Ctrl+C to stop.
