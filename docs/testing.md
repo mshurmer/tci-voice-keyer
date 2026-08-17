@@ -2,46 +2,40 @@
 
 ## Milestone 1 - TCI connection diagnostic
 
-This test is intentionally read-only. It does not send PTT or audio commands.
+Status: **PROVEN on Thetis**
 
-### Prerequisites
+Tested against Thetis TCI server at `ws://127.0.0.1:50001/`.
 
-- Windows PC running Thetis with its TCI server enabled.
-- .NET 8 SDK installed on the development PC.
-- The TCI WebSocket address and port configured in Thetis.
+Observed initialization included:
 
-### Run
+- `protocol:ExpertSDR3,2.0;`
+- `device:HERMES;`
+- `receive_only:false;`
+- `trx_count:2;`
+- `tx_enable:0,true;`
+- `trx:0,false;`
+- `audio_samplerate:48000;`
+- `audio_stream_sample_type:float32;`
+- `audio_stream_channels:2;`
+- `audio_stream_samples:2048;`
+- `tx_stream_audio_buffering:50;`
+- final `ready;`
 
-From the repository root:
+The diagnostic detected `ready;` successfully.
 
-```powershell
-dotnet run --project src/TciVoiceKeyer.Console -- ws://<thetis-ip>:<tci-port>
-```
+### Important compatibility observations
 
-If Thetis is on the same PC, use the loopback address with the port configured in Thetis, for example:
+The Thetis server is emulating TCI protocol 2.0 but advertises its current audio defaults as **48 kHz, float32, stereo, 2048 samples, 50 ms TX buffering**. The voice keyer should initially respect or explicitly negotiate these values rather than assuming int16 mono.
 
-```powershell
-dotnet run --project src/TciVoiceKeyer.Console -- ws://127.0.0.1:<tci-port>
-```
+No PTT or audio was transmitted during this test.
 
-### Expected result
+## Next milestone
 
-The program should:
+Milestone 2 will add a deliberately gated PTT-only test. It must:
 
-1. report that the WebSocket connected;
-2. print TCI initialization messages received from Thetis;
-3. eventually detect `READY;`;
-4. display `TCI READY received - Milestone 1 connection proven.`
-
-Press Ctrl+C to stop.
-
-### If it does not connect
-
-Record the exact console output and check:
-
-- TCI is enabled in Thetis;
-- the address and port match Thetis' TCI settings;
-- Windows Firewall is not blocking the connection;
-- `ws://` rather than `http://` was supplied.
-
-Do not proceed to PTT testing until Milestone 1 works reliably.
+1. Require an explicit command-line opt-in before transmitting any PTT command.
+2. Verify `tx_enable:0,true;` before allowing the test.
+3. Send `trx:0,true,tci;` for a very short controlled interval.
+4. Always attempt `trx:0,false;` from a `finally` block.
+5. Send no TX audio yet.
+6. Log incoming `trx:` state changes and binary frame sizes for later TX_CHRONO analysis.
