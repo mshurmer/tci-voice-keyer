@@ -1,27 +1,32 @@
 using TciVoiceKeyer.Engine;
 
-Console.WriteLine("TCI Voice Keyer - repeat/listen diagnostic");
+Console.WriteLine("TCI Voice Keyer - repeat/listen/volume diagnostic");
 Console.WriteLine("WARNING: this test WILL transmit the selected WAV repeatedly.");
 Console.WriteLine("Use USB, LSB, DIGU/DUSB or DIGL/DLSB and ensure TX is safe.\n");
 
-if (args.Length != 4 ||
+if ((args.Length != 4 && args.Length != 5) ||
     !Uri.TryCreate(args[0], UriKind.Absolute, out var serverUri) ||
     !int.TryParse(args[2], out var repeatCount) ||
-    !double.TryParse(args[3], out var listenSeconds))
+    !double.TryParse(args[3], out var listenSeconds) ||
+    (args.Length == 5 && !double.TryParse(args[4], out _)))
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  dotnet run --project src/TciVoiceKeyer.RepeatDiagnostic -- ws://<thetis-ip>:<port> \"C:\\path\\message.wav\" <repeat-count> <listen-seconds>");
-    Console.WriteLine("Example:");
-    Console.WriteLine("  dotnet run --project src/TciVoiceKeyer.RepeatDiagnostic -- ws://127.0.0.1:50001/ \"C:\\audio\\cq.wav\" 3 8");
+    Console.WriteLine("  dotnet run --project src/TciVoiceKeyer.RepeatDiagnostic -- ws://<thetis-ip>:<port> \"C:\\path\\message.wav\" <repeat-count> <listen-seconds> [volume-percent]");
+    Console.WriteLine("Examples:");
+    Console.WriteLine("  ... \"C:\\audio\\cq.wav\" 3 8");
+    Console.WriteLine("  ... \"C:\\audio\\cq.wav\" 3 8 50");
     return;
 }
+
+var volumePercent = args.Length == 5 ? double.Parse(args[4]) : 100.0;
 
 var options = new KeyerOptions(
     serverUri,
     Path.GetFullPath(args[1]),
     repeatCount,
     TimeSpan.FromSeconds(listenSeconds),
-    KeyerOptions.DefaultTailSilence);
+    KeyerOptions.DefaultTailSilence,
+    volumePercent);
 
 try
 {
@@ -34,6 +39,7 @@ catch (Exception ex)
 }
 
 Console.WriteLine($"WAV:          {options.WavFile}");
+Console.WriteLine($"WAV volume:   {options.VolumePercent:F0}%");
 Console.WriteLine($"Repeat count: {options.RepeatCount}");
 Console.WriteLine($"Listen time:  {options.ListenDelay.TotalSeconds:F1} s (starts after RX confirmation)");
 Console.WriteLine($"TX tail:      {options.TailSilence.TotalMilliseconds:F0} ms automatic digital silence\n");
