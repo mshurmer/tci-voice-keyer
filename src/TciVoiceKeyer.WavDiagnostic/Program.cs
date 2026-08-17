@@ -9,7 +9,7 @@ const uint TxChrono = 3;
 const int RequiredRate = 48000;
 const int MaxTransmitSeconds = 30;
 const int FadeOutMilliseconds = 20;
-const int TailSilenceMilliseconds = 250;
+const int TailSilenceMilliseconds = 500;
 
 Console.WriteLine("TCI Voice Keyer - Milestone 5 WAV playback diagnostic");
 Console.WriteLine("WARNING: this test WILL transmit the selected WAV file over TCI.");
