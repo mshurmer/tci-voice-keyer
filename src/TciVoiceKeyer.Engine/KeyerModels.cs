@@ -5,7 +5,8 @@ public sealed record KeyerOptions(
     string WavFile,
     int RepeatCount,
     TimeSpan ListenDelay,
-    TimeSpan TailSilence)
+    TimeSpan TailSilence,
+    double VolumePercent = 100)
 {
     public static readonly TimeSpan DefaultTailSilence = TimeSpan.FromMilliseconds(500);
 
@@ -21,6 +22,8 @@ public sealed record KeyerOptions(
             throw new ArgumentOutOfRangeException(nameof(ListenDelay), "Listen delay must be between 0 and 10 minutes.");
         if (TailSilence < TimeSpan.Zero || TailSilence > TimeSpan.FromSeconds(5))
             throw new ArgumentOutOfRangeException(nameof(TailSilence), "Tail silence must be between 0 and 5 seconds.");
+        if (VolumePercent is < 0 or > 200)
+            throw new ArgumentOutOfRangeException(nameof(VolumePercent), "WAV volume must be between 0% and 200%.");
     }
 }
 

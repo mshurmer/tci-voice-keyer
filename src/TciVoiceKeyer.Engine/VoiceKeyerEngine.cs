@@ -35,6 +35,7 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
         if (wav.Duration.TotalSeconds > MaxTransmitSeconds)
             throw new InvalidDataException($"WAV duration is {wav.Duration.TotalSeconds:F1}s; safety limit is {MaxTransmitSeconds}s.");
 
+        var clippedFrames = ApplyVolume(wav.MonoSamples, options.VolumePercent);
         ApplyFadeOut(wav.MonoSamples, wav.SampleRate, FadeOutMilliseconds);
 
         _runCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -60,7 +61,10 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
             await SendTextAsync("audio_stream_samples:512;", ct);
             await SendTextAsync("tx_stream_audio_buffering:100;", ct);
 
-            Report(KeyerState.Ready, $"Ready in {init.Mode}. WAV {wav.Duration.TotalSeconds:F2}s, repeat {options.RepeatCount}.", 0, options.RepeatCount);
+            var clippingText = clippedFrames > 0 ? $", WARNING {clippedFrames} clipped frame(s)" : string.Empty;
+            Report(KeyerState.Ready,
+                $"Ready in {init.Mode}. WAV {wav.Duration.TotalSeconds:F2}s, volume {options.VolumePercent:F0}%, repeat {options.RepeatCount}{clippingText}.",
+                0, options.RepeatCount);
 
             for (var repeat = 1; repeat <= options.RepeatCount; repeat++)
             {
@@ -129,7 +133,9 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
         var rxConfirmed = false;
         var hardStop = DateTime.UtcNow.AddSeconds(MaxTransmitSeconds + Math.Max(3, options.TailSilence.TotalSeconds + 2));
 
-        Report(KeyerState.Transmitting, $"Transmission {repeat} of {options.RepeatCount}", repeat, options.RepeatCount);
+        Report(KeyerState.Transmitting,
+            $"Transmission {repeat} of {options.RepeatCount} at {options.VolumePercent:F0}% WAV volume",
+            repeat, options.RepeatCount);
         await SendTextAsync($"trx:{Transceiver},true,tci;", ct);
         _txCommandSent = true;
         _pendingReceive ??= ReceiveMessageAsync(ct);
@@ -156,7 +162,9 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
                     {
                         tailStarted = true;
                         tailUntil = DateTime.UtcNow + options.TailSilence;
-                        Report(KeyerState.TailSilence, $"Transmission {repeat}: feeding {options.TailSilence.TotalMilliseconds:F0} ms tail silence.", repeat, options.RepeatCount);
+                        Report(KeyerState.TailSilence,
+                            $"Transmission {repeat}: feeding {options.TailSilence.TotalMilliseconds:F0} ms tail silence.",
+                            repeat, options.RepeatCount);
                     }
 
                     if (tailStarted && tailUntil.HasValue && DateTime.UtcNow >= tailUntil.Value)
@@ -170,7 +178,9 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
         if (!tailStarted)
             throw new TimeoutException("Transmit hard-stop reached before WAV playback completed.");
 
-        Report(KeyerState.WaitingForRx, $"Transmission {repeat}: unkeying and waiting for RX confirmation.", repeat, options.RepeatCount);
+        Report(KeyerState.WaitingForRx,
+            $"Transmission {repeat}: unkeying and waiting for RX confirmation.",
+            repeat, options.RepeatCount);
         await SendTextAsync($"trx:{Transceiver},false;", ct);
         _txCommandSent = false;
 
@@ -339,6 +349,20 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
     private static uint ReadU32(byte[] data, int offset) => BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(offset, 4));
     private static void WriteU32(byte[] data, int offset, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(offset, 4), value);
 
+    private static int ApplyVolume(float[] samples, double volumePercent)
+    {
+        var gain = volumePercent / 100.0;
+        var clippedFrames = 0;
+        for (var i = 0; i < samples.Length; i++)
+        {
+            var scaled = samples[i] * gain;
+            if (scaled > 1.0 || scaled < -1.0)
+                clippedFrames++;
+            samples[i] = (float)Math.Clamp(scaled, -1.0, 1.0);
+        }
+        return clippedFrames;
+    }
+
     private static void ApplyFadeOut(float[] samples, int sampleRate, int milliseconds)
     {
         if (samples.Length == 0 || milliseconds <= 0) return;
@@ -373,8 +397,12 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
             var next = fs.Position + size;
             if (id == "fmt ")
             {
-                format = br.ReadUInt16(); channels = br.ReadUInt16(); rate = br.ReadUInt32();
-                br.ReadUInt32(); br.ReadUInt16(); bits = br.ReadUInt16();
+                format = br.ReadUInt16();
+                channels = br.ReadUInt16();
+                rate = br.ReadUInt32();
+                br.ReadUInt32();
+                br.ReadUInt16();
+                bits = br.ReadUInt16();
             }
             else if (id == "data")
                 data = br.ReadBytes(checked((int)size));
@@ -398,15 +426,18 @@ public sealed class VoiceKeyerEngine : IAsyncDisposable
             {
                 var o = i * frameBytes + ch * bytesPerSample;
                 float v;
-                if (format == 3) v = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(o, 4)));
-                else if (bits == 16) v = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(o, 2)) / 32768f;
+                if (format == 3)
+                    v = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(o, 4)));
+                else if (bits == 16)
+                    v = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(o, 2)) / 32768f;
                 else if (bits == 24)
                 {
                     var raw = data[o] | (data[o + 1] << 8) | (data[o + 2] << 16);
                     if ((raw & 0x800000) != 0) raw |= unchecked((int)0xFF000000);
                     v = raw / 8388608f;
                 }
-                else v = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(o, 4)) / 2147483648f;
+                else
+                    v = BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(o, 4)) / 2147483648f;
                 sum += v;
             }
             mono[i] = (float)Math.Clamp(sum / channels, -1.0, 1.0);
