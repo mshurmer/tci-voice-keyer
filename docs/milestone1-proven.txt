@@ -1,0 +1,1 @@
+Milestone 1 proven against Thetis on 2026-08-17. TCI READY received successfully.

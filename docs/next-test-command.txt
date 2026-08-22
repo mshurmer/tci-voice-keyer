@@ -1,0 +1,1 @@
+Milestone 2 PTT test command will be added on the dedicated PTT branch after the read-only milestone is preserved.
