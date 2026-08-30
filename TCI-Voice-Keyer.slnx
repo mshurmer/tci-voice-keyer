@@ -1,3 +1,5 @@
 <Solution>
   <Project Path="src/TciVoiceKeyer.Console/TciVoiceKeyer.Console.csproj" />
+  <Project Path="src/TciVoiceKeyer.Engine/TciVoiceKeyer.Engine.csproj" />
+  <Project Path="src/TciVoiceKeyer.Gui/TciVoiceKeyer.Gui.csproj" />
 </Solution>
